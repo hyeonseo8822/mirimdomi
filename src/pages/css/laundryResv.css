@@ -103,7 +103,7 @@
   border-radius: 20px;
   margin-left: 80px;
   margin-top: -40px;
-  height: 370px;
+  height: 430px;
   width: 1109px;
   padding: 20px;
   /* Add padding to contain the grid */
@@ -130,15 +130,11 @@
 
 .reservation-slot.available {
   border: 1px solid #E0E0E0;
-  /* Updated border */
   border-radius: 10px;
   background-color: white;
-  /* Updated background color */
   cursor: pointer;
-  width: 106px;
-  /* Updated width */
-  height: 62px;
-  /* Updated height */
+  width: 140px;
+  height: 80px;
   transition: background-color 0.3s;
 }
 
@@ -146,22 +142,70 @@
   background-color: #fffadc;
 }
 
-.reservation-slot.selected {
+.reservation-slot.available.restricted {
+  background-color: #f5f5f5;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.reservation-slot.available.restricted:hover {
+  background-color: #f5f5f5;
+}
+
+.assigned-room-badge {
+  font-size: 0.7em;
+  color: #999;
+  font-weight: normal;
+}
+
+.reservation-slot.past {
   border: 1px solid #E0E0E0;
   border-radius: 10px;
-  background-color: white;
-  /* Changed from #fffadc back to white */
-  width: 106px;
-  height: 62px;
+  background-color: #f5f5f5;
+  width: 140px;
+  height: 80px;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.reservation-slot.in-use {
+  border: 1px solid #E0E0E0;
+  border-radius: 10px;
+  background-color: #fff3cd;
+  width: 140px;
+  height: 80px;
   display: flex;
   flex-direction: column;
   justify-content: space-around;
-  /* Space out room and name */
+  align-items: center;
+  padding: 5px;
+  box-sizing: border-box;
+  cursor: not-allowed;
+}
+
+.reservation-slot.reserved {
+  border: 1px solid #E0E0E0;
+  border-radius: 10px;
+  background-color: white;
+  width: 140px;
+  height: 80px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
   align-items: center;
   padding: 5px;
   box-sizing: border-box;
   cursor: default;
-  /* Not clickable anymore */
+}
+
+.reservation-slot.reserved.my-reservation {
+  background-color: #fffadc;
+  cursor: pointer;
+  border-color: #bfad49;
+}
+
+.reservation-slot.reserved.my-reservation:hover {
+  background-color: #fffbe7;
 }
 
 .reserved-slot-content {

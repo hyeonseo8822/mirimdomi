@@ -22,9 +22,9 @@ function Sidebar({ userInfo, onLogout }) {
   const location = useLocation();
 
   const isActive = (path, exact) => {
-    if (path === '/main') {
+    if (path === '/') {
       // 홈 페이지 또는 홈의 하위 페이지 (공지사항, 알람)일 때 활성화
-      return location.pathname === '/main' || location.pathname === '/notice' || location.pathname === '/alarm';
+      return location.pathname === '/' || location.pathname === '/notice' || location.pathname === '/alarm';
     }
     if (exact) {
       return location.pathname === path;
@@ -33,7 +33,7 @@ function Sidebar({ userInfo, onLogout }) {
   };
 
   const menuItems = [
-    { path: '/main', label: '홈', iconActive: homeIconActive, icon: homeIcon, exact: false },
+    { path: '/', label: '홈', iconActive: homeIconActive, icon: homeIcon, exact: false },
     { path: '/application', label: '신청 관리', iconActive: applicationIconActive, icon: applicationIcon, exact: false },
     { path: '/community', label: '커뮤니티', iconActive: communityIconActive, icon: communityIcon, exact: false },
     { path: '/laundry', label: '세탁 예약', iconActive: laundryIconActive, icon: laundryIcon, exact: false },
@@ -43,7 +43,7 @@ function Sidebar({ userInfo, onLogout }) {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
-        <Link to="/main" className="sidebar-brand">
+        <Link to="/" className="sidebar-brand">
           미림도미
         </Link>
       </div>

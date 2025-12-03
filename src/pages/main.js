@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './css/main.css';
+import { supabase } from '../supabaseClient';
 
 // 로컬 이미지 경로
 const arrowRightIcon = "/img/arrow-right.svg";
@@ -24,13 +25,94 @@ function Main({ userInfo }) {
     return `${year}.${month}.${day}`;
   };
 
-  // 공지사항 데이터 (나중에 API에서 가져올 예정)
-  const notices = [
-    { id: 1, title: '금주 금요일 위생검사 안내', date: '2025.03.21' },
-    { id: 2, title: '금주 금요일 위생검사 안내', date: '2025.03.21' },
-    { id: 3, title: '금주 금요일 위생검사 안내', date: '2025.03.21' },
-    { id: 4, title: '금주 금요일 위생검사 안내', date: '2025.03.21' },
-  ];
+  // 공지사항 데이터
+  const [notices, setNotices] = useState([]);
+  const [noticesLoading, setNoticesLoading] = useState(true);
+
+  // 날짜 포맷팅 함수 (created_at을 YYYY.MM.DD 형식으로 변환)
+  const formatDate = (dateString) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}.${month}.${day}`;
+  };
+
+  // 공지사항 데이터 가져오기
+  const fetchNotices = async () => {
+    setNoticesLoading(true);
+    try {
+      console.log('공지사항 데이터 가져오기 시작 (main)...');
+      
+      // 먼저 'notice' 테이블 시도
+      let { data, error } = await supabase
+        .from('notice')
+        .select('id, title, created_at')
+        .order('created_at', { ascending: false })
+        .limit(4); // 최신 4개만 가져오기
+
+      console.log('공지사항 쿼리 결과 (main, notice):', { data, error, dataLength: data?.length });
+
+      // 에러가 있고 테이블을 찾을 수 없다면 'notices' 시도
+      if (error && (error.message?.includes('relation') || error.message?.includes('does not exist'))) {
+        console.log('notice 테이블을 찾을 수 없음, notices 테이블 시도...');
+        const result = await supabase
+          .from('notices')
+          .select('id, title, created_at')
+          .order('created_at', { ascending: false })
+          .limit(4);
+        data = result.data;
+        error = result.error;
+        console.log('공지사항 쿼리 결과 (main, notices):', { data, error, dataLength: data?.length });
+      }
+
+      if (error) {
+        console.error('공지사항 불러오기 실패:', error);
+        console.error('에러 상세:', JSON.stringify(error, null, 2));
+        setNotices([]);
+        return;
+      }
+
+      if (!data) {
+        console.warn('데이터가 null입니다 (main).');
+        setNotices([]);
+        return;
+      }
+
+      console.log('가져온 공지사항 데이터 (main):', data);
+      console.log('데이터 개수 (main):', data.length);
+
+      // 데이터 포맷 변환
+      const formattedNotices = (data || []).map(notice => {
+        if (!notice) {
+          console.warn('null notice 발견 (main)');
+          return null;
+        }
+        return {
+          id: notice.id,
+          title: notice.title || '(제목 없음)',
+          date: formatDate(notice.created_at),
+        };
+      }).filter(notice => notice !== null); // null 제거
+
+      console.log('포맷팅된 공지사항 (main):', formattedNotices);
+      console.log('포맷팅된 공지사항 개수 (main):', formattedNotices.length);
+      
+      setNotices(formattedNotices);
+    } catch (error) {
+      console.error('공지사항 가져오기 중 오류:', error);
+      console.error('에러 스택:', error.stack);
+      setNotices([]);
+    } finally {
+      setNoticesLoading(false);
+    }
+  };
+
+  // 컴포넌트 마운트 시 공지사항 가져오기
+  useEffect(() => {
+    fetchNotices();
+  }, []);
 
   // 알람 데이터
   const alarms = [
@@ -41,12 +123,48 @@ function Main({ userInfo }) {
   ];
 
   // 커뮤니티 데이터
-  const communityPosts = [
-    { id: 1, category: '분실', title: '노란색 충전기 잃어버리신 분', time: '03:14' },
-    { id: 2, category: '분실', title: '노란색 충전기 잃어버리신 분', time: '03:14' },
-    { id: 3, category: '분실', title: '노란색 충전기 잃어버리신 분', time: '03:14' },
-    { id: 4, category: '분실', title: '노란색 충전기 잃어버리신 분', time: '03:14' },
-  ];
+  const [communityPosts, setCommunityPosts] = useState([]);
+  const [communityLoading, setCommunityLoading] = useState(true);
+
+  // 커뮤니티 게시글 가져오기
+  const fetchCommunityPosts = async () => {
+    setCommunityLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('posts')
+        .select('id, title, category, created_at')
+        .order('created_at', { ascending: false })
+        .limit(4); // 최신 4개만 가져오기
+
+      if (error) {
+        console.error('커뮤니티 게시글 불러오기 실패:', error);
+        setCommunityPosts([]);
+      } else {
+        // 데이터 포맷 변환 (main.js에서 사용하는 형식으로)
+        const formattedPosts = (data || []).map(post => ({
+          id: post.id,
+          category: post.category === '분실물 게시판' ? '분실' : '자유',
+          title: post.title,
+          time: new Date(post.created_at).toLocaleTimeString('ko-KR', { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: false 
+          }),
+        }));
+        setCommunityPosts(formattedPosts);
+      }
+    } catch (error) {
+      console.error('커뮤니티 게시글 가져오기 중 오류:', error);
+      setCommunityPosts([]);
+    } finally {
+      setCommunityLoading(false);
+    }
+  };
+
+  // 컴포넌트 마운트 시 커뮤니티 게시글 가져오기
+  useEffect(() => {
+    fetchCommunityPosts();
+  }, []);
 
   // 시간표 데이터
   const [timetable, setTimetable] = useState([]);
@@ -376,15 +494,27 @@ const fetchTimetable = async (grade, classNum, date) => {
             <img src={arrowRightIcon} alt="더보기" className="arrow-icon" />
           </div>
           <div className="notice-list">
-            {notices.map((notice) => (
-              <div key={notice.id} className="notice-item">
-                <div className="notice-content">
-                  <div className="notice-dot"></div>
-                  <p className="notice-title">{notice.title}</p>
-                </div>
-                <p className="notice-date">{notice.date}</p>
-              </div>
-            ))}
+            {(() => {
+              console.log('Main 공지사항 렌더링:', { noticesLoading, noticesCount: notices.length, notices });
+              return noticesLoading ? (
+                <div style={{ padding: '10px', textAlign: 'center', fontSize: '14px' }}>로딩 중...</div>
+              ) : notices.length === 0 ? (
+                <div style={{ padding: '10px', textAlign: 'center', fontSize: '14px' }}>공지사항이 없습니다.</div>
+              ) : (
+                notices.map((notice) => {
+                  console.log('Main 공지사항 아이템 렌더링:', notice);
+                  return (
+                    <div key={notice.id} className="notice-item">
+                      <div className="notice-content">
+                        <div className="notice-dot"></div>
+                        <p className="notice-title">{notice.title}</p>
+                      </div>
+                      <p className="notice-date">{notice.date}</p>
+                    </div>
+                  );
+                })
+              );
+            })()}
           </div>
         </div>
 
@@ -449,15 +579,25 @@ const fetchTimetable = async (grade, classNum, date) => {
             <img src={arrowRightIcon} alt="더보기" className="arrow-icon" />
           </div>
           <div className="community-list">
-            {communityPosts.map((post) => (
-              <div key={post.id} className="community-item">
-                <div className="community-content">
-                  <span className="community-category">{post.category}</span>
-                  <p className="community-title">{post.title}</p>
-                </div>
-                <p className="community-time">{post.time}</p>
+            {communityLoading ? (
+              <div style={{ padding: '20px', textAlign: 'center', color: '#999' }}>
+                커뮤니티 게시글을 불러오는 중...
               </div>
-            ))}
+            ) : communityPosts.length > 0 ? (
+              communityPosts.map((post) => (
+                <div key={post.id} className="community-item">
+                  <div className="community-content">
+                    <span className="community-category">{post.category}</span>
+                    <p className="community-title">{post.title}</p>
+                  </div>
+                  <p className="community-time">{post.time}</p>
+                </div>
+              ))
+            ) : (
+              <div style={{ padding: '20px', textAlign: 'center', color: '#999' }}>
+                커뮤니티 게시글이 없습니다.
+              </div>
+            )}
           </div>
         </div>
 

@@ -25,6 +25,8 @@ function Community({ userInfo }) { // userInfo prop 받기
   const [selectedCategory, setSelectedCategory] = useState('자유 게시판'); // 새 글 작성 시 카테고리
   const [posts, setPosts] = useState([]); // Supabase에서 가져올 게시글 목록
   const [loading, setLoading] = useState(true); // 로딩 상태
+  const [comments, setComments] = useState([]); // 댓글 목록
+  const [postDetail, setPostDetail] = useState(null); // 게시글 상세 정보
 
   // 현재 날짜 포맷팅
   const getCurrentDate = () => {
@@ -56,10 +58,93 @@ function Community({ userInfo }) { // userInfo prop 받기
     fetchPosts();
   }, []);
 
-  const handlePostClick = (post) => {
-    // 클릭한 게시글을 선택 (나중에 API에서 상세 정보 가져오기)
-    // 현재는 게시글 상세 데이터가 없으므로 임시로 post 객체만 저장
+  // 게시글 상세 정보 및 댓글 가져오기
+  const fetchPostDetail = async (postId) => {
+    try {
+      // 먼저 현재 게시글 정보 가져오기
+      const { data: currentPost, error: currentError } = await supabase
+        .from('posts')
+        .select('views')
+        .eq('id', postId)
+        .single();
+
+      if (currentError) {
+        console.error('게시글 정보 가져오기 실패:', currentError);
+      } else {
+        // 조회수 증가
+        await supabase
+          .from('posts')
+          .update({ views: (currentPost.views || 0) + 1 })
+          .eq('id', postId);
+      }
+
+      // 게시글 상세 정보 가져오기
+      const { data: postData, error: postError } = await supabase
+        .from('posts')
+        .select('*')
+        .eq('id', postId)
+        .single();
+
+      if (postError) {
+        console.error('게시글 상세 정보 불러오기 실패:', postError);
+        return;
+      }
+
+      setPostDetail(postData);
+
+      // 댓글 가져오기
+      const { data: commentsData, error: commentsError } = await supabase
+        .from('comments')
+        .select('*')
+        .eq('post_id', postId)
+        .order('created_at', { ascending: true });
+
+      if (commentsError) {
+        console.error('댓글 불러오기 실패:', commentsError);
+        setComments([]);
+      } else {
+        setComments(commentsData || []);
+        
+        // 실제 댓글 수와 comments_count 동기화
+        const actualCommentCount = (commentsData || []).length;
+        const updatedViews = (currentPost?.views || 0) + 1;
+        
+        if (postData.comments_count !== actualCommentCount) {
+          // 댓글 수가 다르면 업데이트
+          await supabase
+            .from('posts')
+            .update({ comments_count: actualCommentCount })
+            .eq('id', postId);
+          
+          // 로컬 상태 업데이트
+          const updatedPost = { ...postData, comments_count: actualCommentCount, views: updatedViews };
+          setPostDetail(updatedPost);
+          setPosts(posts.map(p => 
+            p.id === postId 
+              ? { ...p, comments_count: actualCommentCount, views: updatedViews }
+              : p
+          ));
+          setSelectedPost(updatedPost);
+        } else {
+          // 조회수만 업데이트
+          const updatedPost = { ...postData, views: updatedViews };
+          setPosts(posts.map(p => 
+            p.id === postId 
+              ? { ...p, views: updatedViews }
+              : p
+          ));
+          setSelectedPost(updatedPost);
+        }
+      }
+    } catch (error) {
+      console.error('게시글 상세 정보 가져오기 중 오류:', error);
+    }
+  };
+
+  const handlePostClick = async (post) => {
     setSelectedPost(post);
+    // 게시글 상세 정보 및 댓글 가져오기
+    await fetchPostDetail(post.id);
   };
 
   const handleBoardArrowClick = (boardName, e) => {
@@ -74,12 +159,76 @@ function Community({ userInfo }) { // userInfo prop 받기
   const handleBackToMain = () => {
     setSelectedBoard(null);
     setSelectedPost(null); // 게시글 상세 화면에서도 뒤로가기 시 초기화
+    setComments([]); // 댓글 목록 초기화
+    setPostDetail(null); // 게시글 상세 정보 초기화
   };
 
-  const handleCommentSubmit = () => {
-    if (comment.trim()) {
-      console.log('댓글:', comment);
+  const handleCommentSubmit = async () => {
+    if (!comment.trim()) {
+      return;
+    }
+
+    if (!userInfo?.id || !userInfo?.name) {
+      alert('로그인이 필요합니다.');
+      return;
+    }
+
+    if (!selectedPost?.id) {
+      alert('게시글을 선택해주세요.');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('comments')
+        .insert([
+          {
+            post_id: selectedPost.id,
+            user_id: userInfo.id,
+            user_name: userInfo.name,
+            content: comment.trim(),
+          },
+        ])
+        .select()
+        .single();
+
+      if (error) {
+        console.error('댓글 작성 실패:', error);
+        alert('댓글 작성 중 오류가 발생했습니다: ' + error.message);
+        return;
+      }
+
+      // 댓글 목록에 추가
+      const newComments = [...comments, data];
+      setComments(newComments);
+      
+      // 게시글의 댓글 수 업데이트
+      const newCommentCount = newComments.length;
+      const { error: updateError } = await supabase
+        .from('posts')
+        .update({ comments_count: newCommentCount })
+        .eq('id', selectedPost.id);
+
+      if (updateError) {
+        console.error('댓글 수 업데이트 실패:', updateError);
+      } else {
+        // 게시글 목록의 댓글 수도 업데이트
+        setPosts(posts.map(p => 
+          p.id === selectedPost.id 
+            ? { ...p, comments_count: newCommentCount }
+            : p
+        ));
+        // 선택된 게시글의 댓글 수도 업데이트
+        if (postDetail) {
+          setPostDetail({ ...postDetail, comments_count: newCommentCount });
+        }
+        setSelectedPost({ ...selectedPost, comments_count: newCommentCount });
+      }
+
       setComment('');
+    } catch (error) {
+      console.error('댓글 작성 중 오류:', error);
+      alert('댓글 작성 중 오류가 발생했습니다.');
     }
   };
 
@@ -192,34 +341,46 @@ function Community({ userInfo }) { // userInfo prop 받기
                           <div className="post-stats">
                             <div className="post-stat-item">
                               <img src={eyeIcon} alt="조회" className="stat-icon" />
-                              <span className="stat-value">{selectedPost.views}</span>
+                              <span className="stat-value">{postDetail?.views ?? selectedPost.views ?? 0}</span>
                             </div>
                             <div className="post-stat-item">
                               <img src={commentIcon} alt="댓글" className="stat-icon" />
-                              <span className="stat-value">{selectedPost.comments_count}</span>
+                              <span className="stat-value">{postDetail?.comments_count ?? selectedPost.comments_count ?? comments.length}</span>
                             </div>
                           </div>
                         </div>
                       </div>
 
                       <div className="post-content">
-                        <p>{selectedPost.content}</p>
+                      <p>{postDetail?.content || selectedPost.content}</p>
                       </div>
 
-                      {/* 댓글 섹션 (추후 구현) */}
+                    {/* 댓글 섹션 */}
                       <div className="comments-section">
                         <div className="comments-header">
-                          <h3 className="comments-title">댓글 (0)</h3> {/* 동적으로 변경 예정 */}
+                        <h3 className="comments-title">댓글 ({comments.length})</h3>
                           <div className="comments-list">
+                          {comments.length === 0 ? (
                             <div className="no-comments-message">댓글이 없습니다.</div>
-                            {/* {selectedPost.commentsList.map((comment, index) => (
+                          ) : (
+                            comments.map((comment) => (
                               <div key={comment.id} className="comment-item">
                                 <p className="comment-content">{comment.content}</p>
                                 <div className="comment-meta">
-                                  <p className="comment-time">{comment.time}</p>
+                                  <p className="comment-author">{comment.user_name || '익명'}</p>
+                                  <p className="comment-time">
+                                    {new Date(comment.created_at).toLocaleString('ko-KR', {
+                                      year: 'numeric',
+                                      month: '2-digit',
+                                      day: '2-digit',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </p>
                                 </div>
                               </div>
-                            ))} */}
+                            ))
+                          )}
                           </div>
                         </div>
 
@@ -321,34 +482,46 @@ function Community({ userInfo }) { // userInfo prop 받기
                         <div className="post-stats">
                           <div className="post-stat-item">
                             <img src={eyeIcon} alt="조회" className="stat-icon" />
-                            <span className="stat-value">{selectedPost.views}</span>
+                            <span className="stat-value">{postDetail?.views ?? selectedPost.views ?? 0}</span>
                           </div>
                           <div className="post-stat-item">
                             <img src={commentIcon} alt="댓글" className="stat-icon" />
-                            <span className="stat-value">{selectedPost.comments_count}</span>
+                            <span className="stat-value">{postDetail?.comments_count ?? selectedPost.comments_count ?? comments.length}</span>
                           </div>
                         </div>
                       </div>
                     </div>
 
                     <div className="post-content">
-                      <p>{selectedPost.content}</p>
+                      <p>{postDetail?.content || selectedPost.content}</p>
                     </div>
 
-                    {/* 댓글 섹션 (추후 구현) */}
+                    {/* 댓글 섹션 */}
                     <div className="comments-section">
                       <div className="comments-header">
-                        <h3 className="comments-title">댓글 (0)</h3> {/* 동적으로 변경 예정 */}
+                        <h3 className="comments-title">댓글 ({comments.length})</h3>
                         <div className="comments-list">
+                          {comments.length === 0 ? (
                           <div className="no-comments-message">댓글이 없습니다.</div>
-                          {/* {selectedPost.commentsList.map((comment, index) => (
+                          ) : (
+                            comments.map((comment) => (
                             <div key={comment.id} className="comment-item">
                               <p className="comment-content">{comment.content}</p>
                               <div className="comment-meta">
-                                <p className="comment-time">{comment.time}</p>
+                                  <p className="comment-author">{comment.user_name || '익명'}</p>
+                                  <p className="comment-time">
+                                    {new Date(comment.created_at).toLocaleString('ko-KR', {
+                                      year: 'numeric',
+                                      month: '2-digit',
+                                      day: '2-digit',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </p>
+                                </div>
                               </div>
-                            </div>
-                          ))} */}
+                            ))
+                          )}
                         </div>
                       </div>
 

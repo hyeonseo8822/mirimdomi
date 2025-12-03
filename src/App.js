@@ -45,214 +45,219 @@ function App() {
         setUserInfo(prev => ({ ...prev, id: googleUserId })); // Google ID만 임시로 설정
         setIsNewUser(true);
       }
-    } catch (error)
- {
+    } catch (error) {
       console.error('사용자 프로필 불러오기 실패:', error);
-      // 에러 발생 시 로그인 상태를 유지하면서 사용자 정보 로드 실패 처리
+      // 에러 발생 시에도 새 사용자로 처리
+      setUserInfo(prev => ({ ...prev, id: googleUserId }));
+      setIsNewUser(true);
     }
   };
 
   // 페이지 로드 시 로그인 상태 확인 및 사용자 정보 로드
   useEffect(() => {
-    // OAuth 콜백 처리 (URL에 code나 hash가 있는 경우)
-    const handleAuthCallback = async () => {
-      console.log('OAuth 콜백 처리 시작...');
-      console.log('현재 URL:', window.location.href);
-      console.log('Hash:', window.location.hash);
+    let mounted = true;
+    let authListener = null;
+
+    // 사용자 프로필 로드 및 상태 설정 함수
+    const loadUserProfile = async (session, forceReload = false) => {
+      if (!mounted) return;
       
-      const hashParams = new URLSearchParams(window.location.hash.substring(1));
-      const accessToken = hashParams.get('access_token');
-      const error = hashParams.get('error');
-      const errorDescription = hashParams.get('error_description');
-      
-      if (error) {
-        console.error('OAuth 에러:', error);
-        console.error('에러 설명:', errorDescription);
-        alert('로그인 중 오류가 발생했습니다: ' + (errorDescription || error));
-        window.history.replaceState({}, document.title, '/login');
+      if (!session || !session.user) {
+        // 세션이 없으면 로그아웃 처리 (단, 초기화 중이 아니고 확실히 SIGNED_OUT인 경우만)
+        // 여기서는 세션이 없으면 로그아웃으로 처리하지 않고 상태 유지
         setIsLoading(false);
         return;
       }
 
-      if (accessToken || window.location.hash.includes('access_token') || window.location.hash.includes('code=')) {
-        // OAuth 콜백이 있는 경우, 세션이 설정될 때까지 대기
-        console.log('OAuth 콜백 감지, 세션 확인 중...');
-        console.log('Access token 존재:', !!accessToken);
-        
-        // Supabase가 자동으로 세션을 처리하도록 함
-        // URL에서 인증 정보는 유지 (Supabase가 처리함)
-        
-        // 세션이 설정될 때까지 최대 10초 대기
-        let attempts = 0;
-        const maxAttempts = 100; // 10초 (100ms * 100)
-        
-        const checkSession = async () => {
-          try {
-            const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-            if (sessionError) {
-              console.error('세션 확인 오류:', sessionError);
-              return false;
-            }
-            if (session) {
-              console.log('OAuth 콜백 후 세션 확인됨:', session);
-              console.log('사용자 정보:', session.user);
-              // URL 정리
-              window.history.replaceState({}, document.title, '/main');
-              return true;
-            }
-            return false;
-          } catch (err) {
-            console.error('세션 확인 중 예외:', err);
-            return false;
-          }
-        };
-
-        while (attempts < maxAttempts) {
-          if (await checkSession()) {
-            console.log('세션 확인 완료');
-            break;
-          }
-          await new Promise(resolve => setTimeout(resolve, 100));
-          attempts++;
-        }
-        
-        if (attempts >= maxAttempts) {
-          console.warn('세션 확인 시간 초과');
-          // 마지막으로 한 번 더 확인
-          const { data: { session } } = await supabase.auth.getSession();
-          if (!session) {
-            console.error('세션을 확인할 수 없습니다.');
-            alert('로그인 세션을 확인할 수 없습니다. 다시 시도해주세요.');
-            window.history.replaceState({}, document.title, '/login');
-          }
-        }
-      } else {
-        console.log('OAuth 콜백이 아닙니다. 일반 페이지 로드입니다.');
-      }
-    };
-
-    handleAuthCallback();
-
-    // Supabase 인증 상태 변경 리스너 추가
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('Supabase Auth State Change Event:', event);
-        console.log('Supabase Auth State Change Session:', session);
-
-        if (session && session.user) {
-          setIsLoggedIn(true);
-          setIsLoading(false);
-          
-          // Supabase OAuth를 통해 로그인한 경우, Google 사용자 정보는 user metadata에 있음
-          const googleUserId = session.user.user_metadata?.sub || 
-                              session.user.user_metadata?.google_id || 
-                              session.user.id;
-          
-          // Google 사용자 정보를 localStorage에 저장
-          if (googleUserId && googleUserId !== session.user.id) {
-            localStorage.setItem('googleUserId', googleUserId);
-          } else if (!localStorage.getItem('googleUserId')) {
-            // Supabase user ID를 사용 (users 테이블의 id가 Supabase UUID를 사용하는 경우)
-            localStorage.setItem('googleUserId', session.user.id);
-          }
-
-          const googleUserIdFromStorage = localStorage.getItem('googleUserId');
-          if (googleUserIdFromStorage) {
-            await fetchUserProfile(googleUserIdFromStorage);
-          } else {
-            console.warn("Google User ID를 찾을 수 없습니다.");
-            await fetchUserProfile(session.user.id);
-          }
-        } else {
-          // 세션이 없으면 로그아웃 상태로 설정
-          setIsLoggedIn(false);
-          setUserInfo(null);
-          setIsLoading(false);
-          localStorage.removeItem('googleAccessToken');
-          localStorage.removeItem('googleUserId');
-        }
-      }
-    );
-
-    // Initial check on mount
-    const initialCheck = async () => {
+      // 세션이 있으면 먼저 로그인 상태로 설정 (프로필 로드 실패해도 로그인 상태 유지)
+      setIsLoggedIn(true);
+      
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
+        // Supabase OAuth를 통해 로그인한 경우, Google 사용자 정보는 user metadata에 있음
+        const googleUserId = session.user.user_metadata?.sub || 
+                            session.user.user_metadata?.google_id || 
+                            session.user.id;
         
-        if (error) {
-          console.error('세션 확인 오류:', error);
+        // Google 사용자 정보를 localStorage에 저장
+        if (googleUserId && googleUserId !== session.user.id) {
+          localStorage.setItem('googleUserId', googleUserId);
+        } else if (!localStorage.getItem('googleUserId')) {
+          // Supabase user ID를 사용 (users 테이블의 id가 Supabase UUID를 사용하는 경우)
+          localStorage.setItem('googleUserId', session.user.id);
+        }
+
+        const googleUserIdFromStorage = localStorage.getItem('googleUserId');
+        const userIdToFetch = googleUserIdFromStorage || session.user.id;
+        
+        // 프로필 로드 (forceReload가 false이고 이미 userInfo가 있으면 스킵)
+        if (!forceReload && userInfo && userInfo.id === userIdToFetch) {
+          console.log('사용자 정보가 이미 로드되어 있음 - 스킵');
           setIsLoading(false);
           return;
         }
 
-        if (session && session.user) {
-          setIsLoggedIn(true);
-          
-          // Google 사용자 ID 추출
-          const googleUserId = session.user.user_metadata?.sub || 
-                              session.user.user_metadata?.google_id || 
-                              session.user.id;
-          
-          if (googleUserId && googleUserId !== session.user.id) {
-            localStorage.setItem('googleUserId', googleUserId);
-          } else if (!localStorage.getItem('googleUserId')) {
-            localStorage.setItem('googleUserId', session.user.id);
-          }
-
-          const googleUserIdFromStorage = localStorage.getItem('googleUserId');
-          if (googleUserIdFromStorage) {
-            await fetchUserProfile(googleUserIdFromStorage);
-          } else {
-            await fetchUserProfile(session.user.id);
-          }
+        if (userIdToFetch) {
+          await fetchUserProfile(userIdToFetch);
         } else {
+          console.warn("Google User ID를 찾을 수 없습니다.");
+          await fetchUserProfile(session.user.id);
+        }
+      } catch (error) {
+        console.error('사용자 프로필 로드 중 오류:', error);
+        // 프로필 로드 실패해도 세션이 있으면 로그인 상태는 유지
+        // userInfo가 없으면 기본 정보라도 설정
+        setUserInfo(prev => {
+          if (prev && prev.id) {
+            // 이미 userInfo가 있으면 유지
+            return prev;
+          }
+          // 없으면 기본 정보 설정
+          if (session?.user) {
+            return {
+              id: session.user.user_metadata?.sub || session.user.user_metadata?.google_id || session.user.id,
+              name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || '사용자',
+            };
+          }
+          return null;
+        });
+      } finally {
+        if (mounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    // 초기 세션 확인 및 인증 리스너 설정
+    const initializeAuth = async () => {
+      try {
+        // Supabase 인증 상태 변경 리스너 추가
+        const { data: listenerData } = supabase.auth.onAuthStateChange(
+          async (event, session) => {
+            console.log('Supabase Auth State Change Event:', event);
+            console.log('Supabase Auth State Change Session:', session ? '있음' : '없음');
+
+            if (!mounted) return;
+
+            // SIGNED_OUT 이벤트만 확실히 로그아웃 처리
+            if (event === 'SIGNED_OUT') {
+              setIsLoggedIn(false);
+              setUserInfo(null);
+              setIsLoading(false);
+              localStorage.removeItem('googleAccessToken');
+              localStorage.removeItem('googleUserId');
+              return;
+            }
+
+            // SIGNED_IN 이벤트만 프로필 강제 리로드
+            if (event === 'SIGNED_IN') {
+              if (session && session.user) {
+                await loadUserProfile(session, true); // 강제 리로드
+                
+                // OAuth 콜백인 경우 URL 정리
+                if (window.location.hash.includes('access_token') || window.location.hash.includes('code=')) {
+                  window.history.replaceState({}, document.title, '/main');
+                }
+              }
+              return;
+            }
+
+            // TOKEN_REFRESHED나 INITIAL_SESSION은 세션이 있으면 상태만 확인 (프로필 리로드 안 함)
+            if (event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') {
+              if (session && session.user) {
+                // 세션이 유효하면 로그인 상태 유지 (프로필은 리로드하지 않음)
+                setIsLoggedIn(true);
+                // userInfo가 없을 때만 로드
+                if (!userInfo || !userInfo.id) {
+                  await loadUserProfile(session);
+                }
+              } else {
+                // 세션이 없지만 SIGNED_OUT이 아닌 경우는 무시 (갱신 중일 수 있음)
+                console.log('세션이 없지만 SIGNED_OUT 이벤트가 아님 - 상태 유지');
+              }
+              return;
+            }
+          }
+        );
+        authListener = listenerData;
+
+        // 초기 세션 확인
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (!mounted) return;
+        
+        if (error) {
+          console.error('세션 확인 오류:', error);
+          setIsLoading(false);
+          // 에러가 발생해도 일단 로딩은 해제하고, 리스너가 나중에 처리하도록 함
+          // 네트워크 오류 등일 수 있으므로 바로 로그아웃 처리하지 않음
+          if (error.message?.includes('network') || error.message?.includes('fetch')) {
+            // 네트워크 오류는 일시적일 수 있으므로 상태 유지
+            console.warn('네트워크 오류로 세션 확인 실패 - 상태 유지');
+            // 기존 로그인 상태가 있으면 유지
+            if (isLoggedIn && userInfo) {
+              // 상태 유지
+            } else {
+              setIsLoggedIn(false);
+              setUserInfo(null);
+            }
+          } else {
+            setIsLoggedIn(false);
+            setUserInfo(null);
+          }
+          return;
+        }
+
+        if (session && session.user) {
+          await loadUserProfile(session);
+        } else {
+          // 세션이 없으면 로그아웃 상태
+          setIsLoggedIn(false);
+          setUserInfo(null);
+          setIsLoading(false);
+        }
+      } catch (error) {
+        console.error('인증 초기화 중 오류:', error);
+        if (mounted) {
+          setIsLoading(false);
           setIsLoggedIn(false);
           setUserInfo(null);
         }
-      } catch (error) {
-        console.error('초기 세션 확인 중 오류:', error);
-        setIsLoggedIn(false);
-        setUserInfo(null);
-      } finally {
-        setIsLoading(false);
       }
     };
-    
-    // OAuth 콜백 처리가 완료된 후 초기 체크 실행
-    setTimeout(() => {
-      initialCheck();
-    }, 500);
 
+    // 타임아웃 추가 - 최대 5초 후에는 무조건 로딩 해제
+    const timeoutId = setTimeout(async () => {
+      if (mounted && isLoading) {
+        console.warn('세션 확인 타임아웃 - 로딩 상태 해제');
+        setIsLoading(false);
+        // 타임아웃 시에도 세션 확인
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session && session.user) {
+          // 세션이 있으면 로그인 상태 유지
+          setIsLoggedIn(true);
+          if (!userInfo || !userInfo.id) {
+            // userInfo가 없으면 로드
+            await loadUserProfile(session);
+          }
+        } else if (!isLoggedIn) {
+          setIsLoggedIn(false);
+          setUserInfo(null);
+        }
+      }
+    }, 5000);
+
+    // 인증 초기화 실행
+    initializeAuth();
 
     return () => {
-      authListener.subscription.unsubscribe();
+      mounted = false;
+      clearTimeout(timeoutId);
+      if (authListener) {
+        authListener.subscription.unsubscribe();
+      }
     };
   }, []);
 
-  const handleLoginSuccess = async (googleUserInfo) => {
-    // Google 사용자 정보 저장 (id와 access token)
-    localStorage.setItem('googleAccessToken', googleUserInfo.accessToken);
-    localStorage.setItem('googleUserId', googleUserInfo.id); // Google User ID 저장
-
-    // Supabase에 Google OAuth로 로그인 시도
-    const { data, error: signInError } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        accessToken: googleUserInfo.accessToken, // access_token 사용
-      },
-    });
-
-    if (signInError) {
-      console.error('Supabase OAuth 로그인 실패:', signInError);
-      alert('Supabase OAuth 로그인 중 오류가 발생했습니다: ' + signInError.message);
-      return;
-    }
-
-    console.log('Supabase session after OAuth login:', await supabase.auth.getSession()); // Verify session after login
-
-    setIsLoggedIn(true);
-    await fetchUserProfile(googleUserInfo.id); // 로그인 성공 후 Supabase에서 프로필 가져오기
-  };
 
   const handleUserInfoSubmit = async (formData) => {
     if (!userInfo?.id) {
@@ -291,10 +296,17 @@ function App() {
     setUserInfo(null);
   };
 
-  const handleUserProfileUpdate = async () => {
+  const handleUserProfileUpdate = async (updatedUserInfo) => {
     // ProfileDetail 또는 UserInfoForm에서 업데이트가 완료되면 호출되어 최신 정보를 가져옴
-    if (userInfo?.id) {
-      await fetchUserProfile(userInfo.id);
+    // 즉시 로컬 상태 업데이트 (옵셔널)
+    if (updatedUserInfo) {
+      setUserInfo(updatedUserInfo);
+    }
+    
+    // 서버에서 최신 정보 가져오기
+    const userIdToFetch = updatedUserInfo?.id || userInfo?.id;
+    if (userIdToFetch) {
+      await fetchUserProfile(userIdToFetch);
     }
   };
 
@@ -326,7 +338,7 @@ function App() {
               <Route path="/" element={<Layout userInfo={userInfo} onLogout={handleLogout} />}>
                 <Route index element={<Navigate to="/main" replace />} />
                 <Route path="main" element={<Main userInfo={userInfo} />} />
-                <Route path="application" element={<Application />} />
+                <Route path="application" element={<Application userInfo={userInfo} />} />
                 <Route path="community" element={<Community userInfo={userInfo} />} />
                 <Route path="laundry" element={<Laundry userInfo={userInfo} />} />
                 <Route path="profile" element={<Profile userInfo={userInfo} onUserProfileUpdate={handleUserProfileUpdate} />} />

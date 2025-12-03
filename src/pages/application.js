@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import './css/application.css';
+import { supabase } from '../supabaseClient';
 
 // 로컬 이미지 경로
 const calendarIcon = "/img/calendar-icon.svg";
 
-function Application() {
+function Application({ userInfo }) {
+  const navigate = useNavigate();
   const [selectedMainTab, setSelectedMainTab] = useState('외박/잔류');
   const [selectedSubTab, setSelectedSubTab] = useState('외박');
   const [showOutgoingCalendar, setShowOutgoingCalendar] = useState(false);
@@ -117,16 +120,71 @@ function Application() {
   };
 
   // 저장 버튼 핸들러
-  const handleSave = () => {
-    // 나중에 API 호출로 저장
-    const saveData = {
-      date: selectedDate,
-      type: selectedSubTab,
-      month: currentMonth,
-      year: currentYear
-    };
-    console.log('저장 데이터:', saveData);
-    alert(`${selectedSubTab} 신청이 저장되었습니다.`);
+  const handleSave = async () => {
+    console.log('외박/잔류 저장 시도 - userInfo:', userInfo);
+    if (!userInfo?.student_id) {
+      console.error('학번 정보 없음:', { userInfo, student_id: userInfo?.student_id });
+      alert('학번 정보를 찾을 수 없습니다. 로그인 상태를 확인해주세요.');
+      return;
+    }
+
+    if (!isSelectedDateSaturday()) {
+      alert('외박/잔류 신청은 토요일만 가능합니다.');
+      return;
+    }
+
+    try {
+      // 날짜 형식 변환 (YYYY-MM-DD)
+      const selectedDateObj = new Date(currentYear, currentMonth - 1, selectedDate);
+      const dateStr = `${selectedDateObj.getFullYear()}-${String(selectedDateObj.getMonth() + 1).padStart(2, '0')}-${String(selectedDateObj.getDate()).padStart(2, '0')}`;
+      
+      // type 변환
+      // enum 값: 'out' (외박), 'return' (잔류)
+      const leaveType = selectedSubTab === '외박' ? 'out' : 'return';
+
+      const insertData = {
+        student_id: userInfo.student_id,
+        type: leaveType,
+        date: dateStr,
+        status: 'pending'
+      };
+
+      console.log('저장 시도:', insertData);
+
+      const { data, error } = await supabase
+        .from('temporary_leave')
+        .insert([insertData])
+        .select();
+
+      if (error) {
+        console.error('외박/잔류 신청 실패:', error);
+        console.error('에러 상세:', JSON.stringify(error, null, 2));
+        console.error('입력 데이터:', insertData);
+        console.error('에러 코드:', error.code);
+        console.error('에러 메시지:', error.message);
+        console.error('에러 힌트:', error.hint);
+        
+        // enum 타입 오류인 경우 더 명확한 메시지
+        if (error.message?.includes('invalid input value for enum') || 
+            error.message?.includes('enum') || 
+            error.code === '23502' ||
+            error.code === '22P02') {
+          alert(`enum 타입 오류가 발생했습니다.\n\n입력한 값:\n- type: ${leaveType}\n- status: pending\n\n콘솔(F12)을 확인하여 정확한 enum 값을 확인해주세요.\n\n에러: ${error.message}`);
+        } else {
+          alert('신청 중 오류가 발생했습니다: ' + error.message);
+        }
+        return;
+      }
+
+      console.log('저장 성공:', data);
+      alert(`${selectedSubTab} 신청이 완료되었습니다.`);
+      
+      // /main으로 이동
+      navigate('/main');
+    } catch (error) {
+      console.error('외박/잔류 신청 중 오류:', error);
+      alert('신청 중 오류가 발생했습니다: ' + (error.message || '알 수 없는 오류'));
+    }
   };
 
   // 현재 달 이름 가져오기
@@ -200,6 +258,61 @@ function Application() {
       setOutgoingCalendarMonth(1);
     } else {
       setOutgoingCalendarMonth(outgoingCalendarMonth + 1);
+    }
+  };
+
+  // 외출 신청 저장 핸들러
+  const handleOutgoingSubmit = async () => {
+    console.log('외출 저장 시도 - userInfo:', userInfo);
+    if (!userInfo?.student_id) {
+      console.error('학번 정보 없음:', { userInfo, student_id: userInfo?.student_id });
+      alert('학번 정보를 찾을 수 없습니다. 로그인 상태를 확인해주세요.');
+      return;
+    }
+
+    if (!outgoingReason.trim()) {
+      alert('외출 사유를 입력해주세요.');
+      return;
+    }
+
+    try {
+      // 날짜 형식 변환 (YYYY-MM-DD)
+      const dateStr = `${outgoingDateObj.getFullYear()}-${String(outgoingDateObj.getMonth() + 1).padStart(2, '0')}-${String(outgoingDateObj.getDate()).padStart(2, '0')}`;
+
+      console.log('외출 신청 시도:', {
+        student_id: userInfo.student_id,
+        date: dateStr,
+        reason: outgoingReason.trim(),
+        status: 'pending'
+      });
+
+      const { data, error } = await supabase
+        .from('temporary_exit')
+        .insert([
+          {
+            student_id: userInfo.student_id,
+            date: dateStr,
+            reason: outgoingReason.trim(),
+            status: 'pending'
+          }
+        ])
+        .select();
+
+      if (error) {
+        console.error('외출 신청 실패:', error);
+        console.error('에러 상세:', JSON.stringify(error, null, 2));
+        alert('신청 중 오류가 발생했습니다: ' + error.message);
+        return;
+      }
+
+      console.log('저장 성공:', data);
+      alert('외출 신청이 완료되었습니다.');
+      
+      // /main으로 이동
+      navigate('/main');
+    } catch (error) {
+      console.error('외출 신청 중 오류:', error);
+      alert('신청 중 오류가 발생했습니다: ' + (error.message || '알 수 없는 오류'));
     }
   };
 
@@ -402,7 +515,7 @@ function Application() {
           </div>
 
           {/* 승인 요청 버튼 */}
-          <button className="submit-button">
+          <button className="submit-button" onClick={handleOutgoingSubmit}>
             승인 요청
           </button>
         </>
